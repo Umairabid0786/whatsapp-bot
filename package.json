@@ -1,0 +1,14 @@
+{
+  "name": "whatsapp-hostinger-gateway",
+  "version": "1.0.0",
+  "description": "Free WhatsApp Gateway for Hostinger WooCommerce",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "qrcode": "^1.5.3",
+    "whatsapp-web.js": "^1.23.0"
+  }
+}
