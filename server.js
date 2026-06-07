@@ -82,7 +82,28 @@ app.get('/', (req, res) => {
 
 // Initial Setup Call
 connectToWhatsApp();
+sock.ev.on('creds.update', saveCreds);
+sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return;
 
+        const m = messages[0];
+        if (!m.message || m.key.fromMe) return;
+
+        const sender = m.key.remoteJid;
+        const phoneKey = sender.split('@')[0];
+        const text = (m.message.conversation || m.message.extendedTextMessage?.text || '').trim();
+
+        const orderId = pendingOrders[phoneKey];
+        if (!orderId) return;
+
+        if (text === '1') {
+            await sock.sendMessage(sender, { text: `Shukriya! Aapka order #${orderId} *confirm* ho gaya hai ✅` });
+            delete pendingOrders[phoneKey];
+        } else if (text === '2') {
+            await sock.sendMessage(sender, { text: `Aapka order #${orderId} *cancel* kar diya gaya hai ❌` });
+            delete pendingOrders[phoneKey];
+        }
+    });
 app.listen(port, () => {
     console.log(`Server is perfectly listening on port ${port}`);
 });
