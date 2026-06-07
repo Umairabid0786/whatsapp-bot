@@ -10,7 +10,7 @@ const port = process.env.PORT || 3000;
 let latestQr = '';
 let isAuthenticated = false;
 
-// WhatsApp Client Configuration (OPTIMIZED FOR RENDER 512MB RAM)
+// WhatsApp Client Configuration (ULTRA-LIGHTWEIGHT FOR RENDER FREE TIER)
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: './whatsapp-session' }),
     puppeteer: {
@@ -21,97 +21,78 @@ const client = new Client({
             '--disable-dev-shm-usage',
             '--no-zygote',
             '--single-process',
+            '--disable-gpu',            // 👈 RAM bachane ke liye GPU disabled
             '--disable-extensions',
-            '--disable-blink-features=AutomationControlled',
-            '--js-flags="--max-old-space-size=400"' // 👈 RAM ko 400MB tak limit rakhne ke liye
+            '--disable-default-apps',
+            '--disable-blink-features=AutomationControlled'
         ],
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36', 
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36', // 👈 Clean Mac User Agent
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
     },
-    // Remote cache taakay resource load kam ho
+    // Yeh block WhatsApp ko crash hone se bachayega
     webVersionCache: {
         type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1017.0-web_beta.html'
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2413.51-web_beta.html'
     }
 });
 
-// QR Code Event
+// --- EVENTS WITH LOGS ---
 client.on('qr', (qr) => {
     latestQr = qr;
     isAuthenticated = false;
-    console.log('Naya QR Code generate hua hai.');
+    console.log('👉 SERVER LOG: Naya QR Code generate ho gaya.');
 });
 
-// Ready Event
 client.on('ready', () => {
     isAuthenticated = true;
     latestQr = '';
-    console.log('WhatsApp Bot Bilkul Ready Aur Active Hai!');
+    console.log('✅ SERVER LOG: WhatsApp Bot Successfully CONNECTED!');
 });
 
-// Authenticated Event
 client.on('authenticated', () => {
     isAuthenticated = true;
+    console.log('👍 SERVER LOG: Authentication Kamyab!');
 });
 
-// Auth Failure Event
-client.on('auth_failure', () => {
+client.on('auth_failure', (msg) => {
     isAuthenticated = false;
+    console.log('❌ SERVER LOG: Auth Failure! Wajah:', msg);
 });
 
 // --- API ROUTES ---
 
 app.get('/qr', async (req, res) => {
     if (isAuthenticated) {
-        return res.send(`
-            <div style="text-align:center; margin-top:50px; font-family:sans-serif;">
-                <h2 style="color:green;">WhatsApp Pehle Se Connected Hai!</h2>
-                <p>Aapka system messages bhejne ke liye taiyar hai.</p>
-            </div>
-        `);
+        return res.send('<h2 style="color:green; text-align:center; margin-top:50px;">WhatsApp Connected Hai!</h2>');
     }
     if (!latestQr) {
-        return res.send(`
-            <div style="text-align:center; margin-top:50px; font-family:sans-serif;">
-                <h2>QR Code taiyar ho raha hai...</h2>
-                <p>Please 10-15 seconds ruk kar page ko <b>Refresh</b> karein.</p>
-            </div>
-        `);
+        return res.send('<h2 style="text-align:center; margin-top:50px;">QR Code load ho raha hai... Page refresh karein.</h2>');
     }
     try {
         const qrImage = await qrcode.toDataURL(latestQr);
         res.send(`
             <div style="text-align:center; margin-top:50px; font-family:sans-serif;">
-                <h2>Apne WhatsApp se yeh QR Code Scan Karein</h2>
-                <div style="margin: 20px auto; padding: 10px; border: 1px solid #ccc; display:inline-block;">
-                    <img src="${qrImage}" alt="WhatsApp QR Code" style="width:250px; height:250px;" />
-                </div>
-                <p>WhatsApp App kholein -> Linked Devices -> Link a Device par ja kar scan karein.</p>
+                <h2>Apne WhatsApp se Scan Karein</h2>
+                <img src="${qrImage}" alt="QR" style="width:250px; height:250px; border:1px solid #ddd; padding:10px;" />
+                <p>Upar diye gaye QR ko scan karein. Agar link na ho, to mobile ka Wi-Fi off karke Mobile Data par check karein.</p>
             </div>
         `);
     } catch (err) {
-        res.status(500).send('QR Code image generate karne mein error aya.');
+        res.status(500).send('Error generating QR.');
     }
 });
 
 app.post('/send-message', async (req, res) => {
     const { phone, message } = req.body;
-
-    if (!isAuthenticated) {
-        return res.status(500).json({ status: 'error', message: 'WhatsApp server connected nahi hai.' });
-    }
+    if (!isAuthenticated) return res.status(500).json({ status: 'error', message: 'WhatsApp Connected nahi hai.' });
 
     try {
         let formattedPhone = phone.replace(/[^\d]/g, '');
-        if (formattedPhone.startsWith('0')) {
-            formattedPhone = '92' + formattedPhone.substring(1);
-        }
-        if (!formattedPhone.endsWith('@c.us')) {
-            formattedPhone = `${formattedPhone}@c.us`;
-        }
+        if (formattedPhone.startsWith('0')) formattedPhone = '92' + formattedPhone.substring(1);
+        if (!formattedPhone.endsWith('@c.us')) formattedPhone = `${formattedPhone}@c.us`;
 
         await client.sendMessage(formattedPhone, message);
-        res.json({ status: 'success', message: 'Message bhej diya gaya hai!' });
+        res.json({ status: 'success', message: 'Message sent!' });
     } catch (error) {
         res.status(500).json({ status: 'error', detail: error.message });
     }
