@@ -1,4 +1,4 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const qrcode = require('qrcode');
 
@@ -7,89 +7,67 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 const port = process.env.PORT || 3000;
+let sock = null;
 let latestQr = '';
-let isAuthenticated = false;
 let connectionStatus = 'Waiting for Login ❌';
+let isAuthenticated = false;
 
-// WhatsApp Client Configuration
-const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: './whatsapp-session' }),
-    puppeteer: {
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--no-zygote',
-            '--disable-gpu',
-            '--disable-extensions',
-            '--no-first-run',
-            '--disable-blink-features=AutomationControlled'
-        ],
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
-    }
-});
+async function connectToWhatsApp() {
+    // Session automatically save karne ke liye
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
 
-// --- DETAILED LOGS FOR TRACKING ---
+    sock = makeWASocket({
+        auth: state,
+        printQRInTerminal: false,
+        syncFullHistory: false, // 👈 Purani history sync nahi karega taakay RAM crash na ho
+        markOnlineOnConnect: true
+    });
 
-client.on('qr', (qr) => {
-    latestQr = qr;
-    isAuthenticated = false;
-    connectionStatus = 'Waiting for Scan 📱';
-    console.log('👉 [SERVER]: Naya QR Code mil gaya hai. Scan ke liye taiyar!');
-});
+    sock.ev.on('creds.update', saveCreds);
 
-client.on('loading_screen', (percent, message) => {
-    connectionStatus = `Loading Chats: ${percent}% ⏳`;
-    console.log(`⏳ [SERVER]: Chats Load ho rahi hain: ${percent}% - ${message}`);
-});
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect, qr } = update;
 
-client.on('authenticated', () => {
-    isAuthenticated = true;
-    connectionStatus = 'Authenticated! Connecting... 🔄';
-    console.log('👍 [SERVER]: Authentication Kamyab! Chats sync ho rahi hain.');
-});
+        if (qr) {
+            latestQr = qr;
+            isAuthenticated = false;
+            connectionStatus = 'Waiting for Scan 📱';
+            console.log('👉 Naya QR Code generate hua hai.');
+        }
 
-client.on('ready', () => {
-    isAuthenticated = true;
-    latestQr = '';
-    connectionStatus = 'Connected ✅';
-    console.log('✅ [SERVER]: WhatsApp Bot Successfully CONNECTED aur Live hai!');
-});
-
-client.on('auth_failure', (msg) => {
-    isAuthenticated = false;
-    connectionStatus = 'Auth Failed ❌';
-    console.log('❌ [SERVER]: Authentication Fail! Wajah:', msg);
-});
-
-client.on('disconnected', (reason) => {
-    isAuthenticated = false;
-    connectionStatus = 'Disconnected ❌';
-    console.log('ℹ️ [SERVER]: WhatsApp Disconnect ho gaya. Wajah:', reason);
-});
+        if (connection === 'close') {
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            isAuthenticated = false;
+            connectionStatus = 'Disconnected ❌';
+            console.log('Connection close ho gayi. Reconnecting:', shouldReconnect);
+            if (shouldReconnect) {
+                connectToWhatsApp(); // Dubara connect karne ki koshish
+            }
+        } else if (connection === 'open') {
+            isAuthenticated = true;
+            latestQr = '';
+            connectionStatus = 'Connected ✅';
+            console.log('✅ WhatsApp Bot successfully CONNECTED!');
+        }
+    });
+}
 
 // --- API ROUTES ---
 
-// 1. QR Display Route
 app.get('/qr', async (req, res) => {
     if (isAuthenticated) {
         return res.send('<h2 style="color:green; text-align:center; margin-top:50px; font-family:sans-serif;">WhatsApp Connected Hai!</h2>');
     }
     if (!latestQr) {
-        return res.send('<h2 style="text-align:center; margin-top:50px; font-family:sans-serif;">QR Code generate ho raha hai... 10 seconds baad Refresh karein.</h2>');
+        return res.send('<h2 style="text-align:center; margin-top:50px; font-family:sans-serif;">QR Code generate ho raha hai... Page refresh karein.</h2>');
     }
     try {
         const qrImage = await qrcode.toDataURL(latestQr);
         res.send(`
             <div style="text-align:center; margin-top:50px; font-family:sans-serif;">
-                <h2>Apne WhatsApp se scan karein</h2>
-                <div style="margin:20px;">
-                    <img src="${qrImage}" alt="QR" style="width:250px; height:250px; border:1px solid #ddd; padding:10px;" />
-                </div>
+                <h2>Apne WhatsApp se scan karein (Baileys Engine)</h2>
+                <img src="${qrImage}" alt="QR" style="width:250px; height:250px; border:1px solid #ddd; padding:10px;" />
                 <p><b>Status:</b> ${connectionStatus}</p>
-                <p style="color:#666; font-size:14px;">Agar "Couldn't link device" aaye, to mobile data use karein aur page refresh karke naya QR scan karein.</p>
             </div>
         `);
     } catch (err) {
@@ -97,7 +75,6 @@ app.get('/qr', async (req, res) => {
     }
 });
 
-// 2. Message Send Route
 app.post('/send-message', async (req, res) => {
     const { phone, message } = req.body;
     if (!isAuthenticated) return res.status(500).json({ status: 'error', message: 'WhatsApp Connected nahi hai.' });
@@ -105,21 +82,22 @@ app.post('/send-message', async (req, res) => {
     try {
         let formattedPhone = phone.replace(/[^\d]/g, '');
         if (formattedPhone.startsWith('0')) formattedPhone = '92' + formattedPhone.substring(1);
-        if (!formattedPhone.endsWith('@c.us')) formattedPhone = `${formattedPhone}@c.us`;
+        if (!formattedPhone.endsWith('@s.whatsapp.net')) formattedPhone = `${formattedPhone}@s.whatsapp.net`;
 
-        await client.sendMessage(formattedPhone, message);
-        res.json({ status: 'success', message: 'Message sent successfully!' });
+        await sock.sendMessage(formattedPhone, { text: message });
+        res.json({ status: 'success', message: 'Message bhej diya gaya!' });
     } catch (error) {
         res.status(500).json({ status: 'error', detail: error.message });
     }
 });
 
-// 3. Main Status Route
 app.get('/', (req, res) => {
     res.send(`WhatsApp Bot Status: ${connectionStatus}`);
 });
 
+// Start application
+connectToWhatsApp();
+
 app.listen(port, () => {
-    console.log(`Server port ${port} par chal raha hai.`);
-    client.initialize();
+    console.log(`Server running on port ${port}`);
 });
