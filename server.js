@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay, Browsers } = require('@whiskeysockets/baileys');
 const express = require('express');
 const qrcode = require('qrcode');
 const fs = require('fs');
@@ -20,7 +20,7 @@ function clearSession() {
     if (fs.existsSync(sessionPath)) {
         try {
             fs.rmSync(sessionPath, { recursive: true, force: true });
-            console.log('🧹 [SERVER]: Corrupt session folder cleared successfully.');
+            console.log('🧹 [SERVER]: Old session folder cleared successfully.');
         } catch (err) {
             console.error('❌ [SERVER]: Session clear karne mein error:', err.message);
         }
@@ -35,7 +35,7 @@ async function connectToWhatsApp() {
         printQRInTerminal: false,
         syncFullHistory: false, // RAM bachane ke liye
         markOnlineOnConnect: false,
-        browser: ['Ubuntu', 'Chrome', '20.0.4']
+        browser: Browsers.macOS('Desktop') // 👈 Fixed: Standard aur trusted desktop browser identity
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -55,17 +55,17 @@ async function connectToWhatsApp() {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
             
-            console.log(`ℹ️ [SERVER]: Connection close hui. Reason Code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
+            console.log(`ℹ️ [SERVER]: Connection close hui. Reason Code: ${statusCode}`);
 
-            // Agar session expire ya corrupt ho jaye to data clear karke fresh start karein
-            if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
-                connectionStatus = 'Session Expired! Generating New QR... 🔄';
+            // Agar session corrupt ho ya WhatsApp block kare to session clear karke fresh start karein
+            if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 405) {
+                connectionStatus = 'Session Resetting... 🔄';
                 clearSession();
-                await delay(5000); // Render ko crash se bachane ke liye delay
+                await delay(5000); 
                 connectToWhatsApp();
             } else if (shouldReconnect) {
                 connectionStatus = 'Reconnecting... 🔄';
-                await delay(5000); // 5 seconds ka safe gap taakay SIGTERM na aaye
+                await delay(5000); // 5 seconds ka safe gap taakay Render deploy loop na kare
                 connectToWhatsApp();
             } else {
                 connectionStatus = 'Disconnected ❌';
