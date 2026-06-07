@@ -10,9 +10,9 @@ const port = process.env.PORT || 3000;
 let latestQr = '';
 let isAuthenticated = false;
 
-// WhatsApp Client Configuration
+// WhatsApp Client Configuration (UPDATED FOR BYPASSING LINKING ERROR)
 const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: './whatsapp-session' }), // Local path for session storage
+    authStrategy: new LocalAuth({ dataPath: './whatsapp-session' }),
     puppeteer: {
         headless: true,
         args: [
@@ -20,9 +20,18 @@ const client = new Client({
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--no-zygote',
-            '--single-process'
+            '--single-process',
+            '--disable-extensions',
+            '--disable-blink-features=AutomationControlled' // 👈 WhatsApp ki automation detection band karne ke liye
         ],
+        // 👈 WhatsApp ko yeh lagna chahiye ke yeh asli Windows 10 aur Chrome Browser hai
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36', 
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
+    },
+    // Baaz dafa WhatsApp version mismatch hota hai, yeh usay handle karega
+    webVersionCache: {
+        type: 'remote',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1017.0-web_beta.html'
     }
 });
 
@@ -54,7 +63,6 @@ client.on('auth_failure', () => {
 
 // --- API ROUTES ---
 
-// 1. Browser mein QR Code dekhne ka Route
 app.get('/qr', async (req, res) => {
     if (isAuthenticated) {
         return res.send(`
@@ -88,12 +96,11 @@ app.get('/qr', async (req, res) => {
     }
 });
 
-// 2. WooCommerce se Message Receive karke Bhejne ka Route
 app.post('/send-message', async (req, res) => {
     const { phone, message } = req.body;
 
     if (!isAuthenticated) {
-        return res.status(500).json({ status: 'error', message: 'WhatsApp server connected nahi hai. Pehle /qr par ja kar scan karein.' });
+        return res.status(500).json({ status: 'error', message: 'WhatsApp server connected nahi hai.' });
     }
 
     if (!phone || !message) {
@@ -101,20 +108,14 @@ app.post('/send-message', async (req, res) => {
     }
 
     try {
-        // Sirf ginti ke numbers rukhna (spaces, dashes, plus hatana)
         let formattedPhone = phone.replace(/[^\d]/g, '');
-
-        // Agar number 03001234567 format mein ho, to usay 923001234567 mein badalna
         if (formattedPhone.startsWith('0')) {
             formattedPhone = '92' + formattedPhone.substring(1);
         }
-
-        // WhatsApp formatting append karna (@c.us)
         if (!formattedPhone.endsWith('@c.us')) {
             formattedPhone = `${formattedPhone}@c.us`;
         }
 
-        // Message send karna
         await client.sendMessage(formattedPhone, message);
         res.json({ status: 'success', message: 'Message kamyabi se bhej diya gaya hai!' });
     } catch (error) {
@@ -122,7 +123,6 @@ app.post('/send-message', async (req, res) => {
     }
 });
 
-// Live Check Route (Render ko active rakhne ke liye help karta hai)
 app.get('/', (req, res) => {
     res.send(`WhatsApp Bot Status: ${isAuthenticated ? 'Connected ✅' : 'Waiting for Login ❌'}`);
 });
