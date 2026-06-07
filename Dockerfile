@@ -1,25 +1,23 @@
+# 1. Base Node image utilize karein
 FROM node:18-slim
 
-# Step 1: Chromium aur uski zaroori Linux libraries install karein
-RUN apt-get update && apt-get install -y \
-    chromium \
-    fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
+# 2. Git install karein (jo npm install ke liye zaroori hai)
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
-# Step 2: Environment variables set karein taakay puppeteer naya chrome download na kare
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-
+# 3. Working directory set karein
 WORKDIR /usr/src/app
 
+# 4. Package files copy karein
 COPY package*.json ./
 
-# Step 3: npm install use karein (yeh bina lock-file ke bhi chal jata hai)
+# 5. Clean install karein (Ab git ka error nahi aayega)
 RUN npm install
 
+# 6. Baqi saara code copy karein
 COPY . .
 
-EXPOSE 3000
+# 7. Render ke liye port expose karein
+EXPOSE 10000
 
-CMD ["node", "server.js"]
+# 8. App ko start karein
+CMD ["npm", "start"]
