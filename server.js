@@ -11,7 +11,7 @@ const port = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI;
 
 // ===== YAHAN BADLEIN: apni marzi ka koi password. WordPress mein bhi BILKUL YEHI daalni hai =====
-const SHARED_SECRET = 'MY_SECRET_KEY_123';
+const SHARED_SECRET = 'Bot12345pass';
 
 let sock = null;
 let latestQr = '';
