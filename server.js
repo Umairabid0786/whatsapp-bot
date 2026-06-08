@@ -11,34 +11,32 @@ const port = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI;
 
 // ===== YAHAN BADLEIN: apni marzi ka koi password. WordPress mein bhi BILKUL YEHI daalni hai =====
-const SHARED_SECRET = 'Assany@123';
+const SHARED_SECRET = 'MY_SECRET_KEY_123';
 
 let sock = null;
 let latestQr = '';
-let connectionStatus = 'Waiting for Login ❌';
+let connectionStatus = 'Waiting for Login \u274c';
 let isAuthenticated = false;
 let reconnectTimeout = null;
 let retryCount = 0;
-const MAX_RETRIES = 6;
+const MAX_RETRIES = 20;
+let hasLoggedInOnce = false;
 
 let mongoClient = null;
 let credsCollection = null;
 
-// Pending orders yaad rakhne ke liye (phone => order_id)
 const pendingOrders = {};
 
-// ---- MongoDB connect ----
 async function connectMongo() {
     if (credsCollection) return credsCollection;
     mongoClient = new MongoClient(MONGO_URI);
     await mongoClient.connect();
     const db = mongoClient.db('whatsapp_bot');
     credsCollection = db.collection('auth_store');
-    console.log('✅ [MONGO]: Connected to MongoDB.');
+    console.log('\u2705 [MONGO]: Connected to MongoDB.');
     return credsCollection;
 }
 
-// ---- MongoDB-based Auth State (file system ki jagah DB use karta hai) ----
 async function useMongoAuthState() {
     const coll = await connectMongo();
 
@@ -101,7 +99,6 @@ async function connectToWhatsApp() {
     const { state, saveCreds, clearAll } = await useMongoAuthState();
     clearAllSession = clearAll;
 
-    // Purane socket ke listeners hatayein (RAM leak block)
     if (sock) {
         try { sock.ev.removeAllListeners(); } catch (e) {}
     }
@@ -116,7 +113,6 @@ async function connectToWhatsApp() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // ---- Customer ke reply (1 ya 2) ko sunna ----
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
 
@@ -131,10 +127,10 @@ async function connectToWhatsApp() {
         if (!orderId) return;
 
         if (text === '1') {
-            await sock.sendMessage(sender, { text: `Shukriya! Aapka order #${orderId} *confirm* ho gaya hai ✅` });
+            await sock.sendMessage(sender, { text: `Shukriya! Aapka order #${orderId} *confirm* ho gaya hai \u2705` });
             delete pendingOrders[phoneKey];
         } else if (text === '2') {
-            await sock.sendMessage(sender, { text: `Aapka order #${orderId} *cancel* kar diya gaya hai ❌` });
+            await sock.sendMessage(sender, { text: `Aapka order #${orderId} *cancel* kar diya gaya hai \u274c` });
             delete pendingOrders[phoneKey];
         }
     });
@@ -145,83 +141,85 @@ async function connectToWhatsApp() {
         if (qr) {
             latestQr = qr;
             isAuthenticated = false;
-            connectionStatus = 'Waiting for Scan 📱';
-            console.log('👉 [SERVER]: New QR Code generated.');
+            retryCount = 0;
+            connectionStatus = 'Waiting for Scan \ud83d\udcf1';
+            console.log('\ud83d\udc49 [SERVER]: New QR Code generated. Scan karein!');
         }
 
         if (connection === 'close') {
             isAuthenticated = false;
             const statusCode = lastDisconnect?.error?.output?.statusCode;
-            console.log(`ℹ️ [SERVER]: Connection close. Reason Code: ${statusCode}`);
+            console.log(`\u2139\ufe0f [SERVER]: Connection close. Reason Code: ${statusCode}`);
 
-            // 1. Real logout (401)
             if (statusCode === DisconnectReason.loggedOut) {
-                connectionStatus = 'Logged Out! Clearing session... 🔄';
+                connectionStatus = 'Logged Out! Clearing session... \ud83d\udd04';
                 await clearAllSession();
                 retryCount = 0;
+                hasLoggedInOnce = false;
                 reconnectTimeout = setTimeout(connectToWhatsApp, 5000);
             }
-            // 2. Restart required (515) — foran reconnect, session valid hai
             else if (statusCode === DisconnectReason.restartRequired) {
-                console.log('🔁 [SERVER]: Restart required, reconnecting immediately...');
+                console.log('\ud83d\udd01 [SERVER]: Restart required, reconnecting immediately...');
                 reconnectTimeout = setTimeout(connectToWhatsApp, 1000);
             }
-            // 3. Conflict / 405 — old container ko marne ka time dein
             else if (statusCode === 405) {
                 retryCount++;
-                if (retryCount > MAX_RETRIES) {
-                    connectionStatus = 'Too many conflicts. Stopped. ⛔';
-                    console.log('⛔ [SERVER]: Max retries hit. Manual restart needed.');
+                if (hasLoggedInOnce && retryCount > MAX_RETRIES) {
+                    connectionStatus = 'Too many conflicts. Stopped. \u26d4';
+                    console.log('\u26d4 [SERVER]: Max retries hit. Manual restart needed.');
                     return;
                 }
-                connectionStatus = `Conflict (405)! Retry ${retryCount}/${MAX_RETRIES} in 10s... 🔄`;
-                reconnectTimeout = setTimeout(connectToWhatsApp, 10000);
+                connectionStatus = `Conflict (405). Retrying... \ud83d\udd04`;
+                console.log(`\u26a0\ufe0f [SERVER]: 405 conflict, retry ${retryCount}. Waiting 8s...`);
+                reconnectTimeout = setTimeout(connectToWhatsApp, 8000);
             }
-            // 4. Baqi network issues
             else {
                 retryCount++;
-                if (retryCount > MAX_RETRIES) {
-                    connectionStatus = 'Connection failed repeatedly. Stopped. ⛔';
+                if (hasLoggedInOnce && retryCount > MAX_RETRIES) {
+                    connectionStatus = 'Connection failed repeatedly. Stopped. \u26d4';
                     return;
                 }
-                connectionStatus = 'Reconnecting... 🔄';
+                connectionStatus = 'Reconnecting... \ud83d\udd04';
                 reconnectTimeout = setTimeout(connectToWhatsApp, 5000);
             }
         } else if (connection === 'open') {
             isAuthenticated = true;
+            hasLoggedInOnce = true;
             latestQr = '';
             retryCount = 0;
-            connectionStatus = 'Connected ✅';
-            console.log('✅ [SERVER]: WhatsApp Bot CONNECTED!');
+            connectionStatus = 'Connected \u2705';
+            console.log('\u2705 [SERVER]: WhatsApp Bot CONNECTED!');
         }
     });
 }
 
 // ================= API ROUTES =================
 
-// ---- QR code page ----
 app.get('/qr', async (req, res) => {
     if (isAuthenticated) {
-        return res.send('<h2 style="color:green; text-align:center; margin-top:50px; font-family:sans-serif;">WhatsApp Connected Hai! 🎉</h2>');
+        return res.send('<h2 style="color:green; text-align:center; margin-top:50px; font-family:sans-serif;">WhatsApp Connected Hai! \ud83c\udf89</h2>');
     }
     if (!latestQr) {
-        return res.send(`<h2 style="text-align:center; margin-top:50px; font-family:sans-serif;">${connectionStatus}</h2><p style="text-align:center;">Page refresh karke check karein...</p>`);
+        return res.send(`<html><head><meta http-equiv="refresh" content="3"></head><body>
+            <h2 style="text-align:center; margin-top:50px; font-family:sans-serif;">${connectionStatus}</h2>
+            <p style="text-align:center; font-family:sans-serif;">QR ka intezar... (page khud refresh ho raha hai)</p>
+        </body></html>`);
     }
     try {
         const qrImage = await qrcode.toDataURL(latestQr);
-        res.send(`
+        res.send(`<html><head><meta http-equiv="refresh" content="20"></head><body>
             <div style="text-align:center; margin-top:50px; font-family:sans-serif;">
                 <h2>Apne WhatsApp se scan karein</h2>
-                <img src="${qrImage}" alt="QR" style="width:250px; height:250px; border:1px solid #ddd; padding:10px;" />
+                <img src="${qrImage}" alt="QR" style="width:280px; height:280px; border:1px solid #ddd; padding:10px;" />
                 <p><b>Current Status:</b> ${connectionStatus}</p>
+                <p style="color:#888;">Scan na ho to 20s baad page khud naya QR dikhayega</p>
             </div>
-        `);
+        </body></html>`);
     } catch (err) {
         res.status(500).send('QR code generation failed.');
     }
 });
 
-// ---- WooCommerce order receive karke WhatsApp message bhejna ----
 app.post('/woo-order', async (req, res) => {
     const { order_id, phone, name, total, items, secret } = req.body;
 
@@ -243,25 +241,24 @@ app.post('/woo-order', async (req, res) => {
         pendingOrders[formattedPhone] = order_id;
 
         const msg =
-`Assalam-o-Alaikum ${name}! 🛍️
+`Assalam-o-Alaikum ${name}! \ud83d\udecd\ufe0f
 
 Aapka order *#${order_id}* mil gaya hai:
 
 ${items}
 *Total: Rs. ${total}*
 
-Order confirm karne ke liye *1* likh kar bhejein ✅
-Cancel karne ke liye *2* likh kar bhejein ❌`;
+Order confirm karne ke liye *1* likh kar bhejein \u2705
+Cancel karne ke liye *2* likh kar bhejein \u274c`;
 
         await sock.sendMessage(jid, { text: msg });
         res.json({ status: 'success' });
     } catch (error) {
-        console.error('❌ [WOO-ORDER]:', error.message);
+        console.error('\u274c [WOO-ORDER]:', error.message);
         res.status(500).json({ status: 'error', detail: error.message });
     }
 });
 
-// ---- Manual message bhejne ka route ----
 app.post('/send-message', async (req, res) => {
     const { phone, message } = req.body;
     if (!isAuthenticated) return res.status(500).json({ status: 'error', message: 'WhatsApp Connected nahi hai.' });
@@ -278,17 +275,28 @@ app.post('/send-message', async (req, res) => {
     }
 });
 
-// ---- Home / status ----
+app.get('/reset', async (req, res) => {
+    try {
+        await clearAllSession();
+        isAuthenticated = false;
+        hasLoggedInOnce = false;
+        retryCount = 0;
+        latestQr = '';
+        res.send('Session cleared! Ab service restart karein aur /qr scan karein.');
+    } catch (e) {
+        res.status(500).send('Reset failed: ' + e.message);
+    }
+});
+
 app.get('/', (req, res) => {
     res.send(`WhatsApp Bot Engine Status: ${connectionStatus}`);
 });
 
-// ---- Global crash protection ----
 process.on('uncaughtException', (err) => {
-    console.error('⚠️ [UNCAUGHT]:', err.message);
+    console.error('\u26a0\ufe0f [UNCAUGHT]:', err.message);
 });
 process.on('unhandledRejection', (err) => {
-    console.error('⚠️ [UNHANDLED]:', err);
+    console.error('\u26a0\ufe0f [UNHANDLED]:', err);
 });
 
 connectToWhatsApp();
